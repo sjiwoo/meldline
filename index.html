@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0f2a30">
+<title>Meldline — online tile rummy</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<section id="menu" class="screen">
+  <div class="logo"><span class="tile demo" data-c="1"><b>M</b></span><span class="tile demo" data-c="0"><b>E</b></span><span class="tile demo" data-c="2"><b>L</b></span><span class="tile demo" data-c="3"><b>D</b></span></div>
+  <h1>Meldline</h1>
+  <p class="tag">Runs, groups and wild stars. A tile rummy table for 2–4 players.</p>
+  <input id="name" maxlength="12" placeholder="Your name" autocomplete="off">
+  <div class="card">
+    <h2>Solo</h2>
+    <div class="row">
+      <label>Bots <select id="botn"><option>1</option><option>2</option><option selected>3</option></select></label>
+      <button id="soloBtn" class="primary">Play</button>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Online</h2>
+    <button id="hostBtn" class="primary wide">Host a table</button>
+    <div class="row">
+      <input id="code" maxlength="5" placeholder="CODE" autocomplete="off" autocapitalize="characters">
+      <button id="joinBtn">Join</button>
+    </div>
+  </div>
+  <details class="card">
+    <summary>How to play</summary>
+    <ul>
+      <li><b>Run:</b> 3+ consecutive numbers in one colour. <b>Group:</b> 3–4 of the same number in different colours. A star is wild.</li>
+      <li>Your first play must be your own sets worth <b>30+ points</b>.</li>
+      <li>After that you can add to, split and rebuild any set on the table, as long as everything is valid when you end your turn.</li>
+      <li>Can't play? Draw a tile. First to empty their rack wins.</li>
+      <li>Drag tiles with a finger. Drag the table to pan, pinch or scroll to zoom.</li>
+    </ul>
+  </details>
+</section>
+
+<section id="lobby" class="screen hidden">
+  <h1>Table <span id="lobbyCode"></span></h1>
+  <p class="tag" id="lobbyHint"></p>
+  <button id="shareBtn" class="wide">Copy invite link</button>
+  <ul id="seats"></ul>
+  <div id="hostCtl">
+    <div class="row">
+      <label>Turn timer <select id="timerSel"><option value="0">Off</option><option value="60">60s</option><option value="120" selected>2 min</option><option value="180">3 min</option></select></label>
+      <button id="addBot">+ Bot</button>
+    </div>
+    <button id="startBtn" class="primary wide">Start game</button>
+  </div>
+  <button id="leaveBtn" class="wide ghostbtn">Leave</button>
+</section>
+
+<section id="game" class="hidden">
+  <header id="top">
+    <div id="players"></div>
+    <div id="meta"><span id="pool" title="Tiles left to draw"></span><span id="timer"></span></div>
+  </header>
+  <main id="board">
+    <div id="world"><div id="hint"></div></div>
+    <div id="status"></div>
+    <div id="zoom">
+      <button data-z="in" aria-label="Zoom in">+</button>
+      <button data-z="out" aria-label="Zoom out">−</button>
+      <button data-z="fit" aria-label="Fit table">Fit</button>
+      <button id="expand" aria-label="Expand table view">⤢</button>
+    </div>
+  </main>
+  <footer id="dock">
+    <div id="actions">
+      <button id="sortRun" title="Sort by colour">1·2·3</button>
+      <button id="sortGroup" title="Sort by number">7·7·7</button>
+      <span class="grow"></span>
+      <button id="undoBtn">Undo</button>
+      <button id="mainBtn" class="primary">Draw</button>
+    </div>
+    <div id="rack"></div>
+  </footer>
+</section>
+
+<div id="draglayer"></div>
+<div id="over" class="hidden"></div>
+<div id="toast"></div>
+
+<script src="vendor/peerjs.min.js"></script>
+<script src="js/logic.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
