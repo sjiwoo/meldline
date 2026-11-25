@@ -8,6 +8,10 @@
   let view = { x: 0, y: 0, s: 1 }, drag = null, ghost = null, rackGeo = { cols: 1, tw: 40, th: 55, gap: 5, pad: 7 };
   const tiles = new Map();
   let sortMode = 'run', manual = false;
+  /* animation bookkeeping */
+  let R = null; // what the last render showed: { turn, counts, pool }
+  const flying = new Set(), dropFrom = new Map(), flights = [];
+  const noAnim = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   /* ---------- small helpers ---------- */
   let toastT;
@@ -22,6 +26,15 @@
     return n;
   }
   function roomUrl(code) { const u = new URL(location.href); u.searchParams.set('room', code); return u.href; }
+  let myAv = Avatar.random();
+  try { const a = JSON.parse(localStorage.getItem('meldline-avatar')); if (a) myAv = Avatar.clean(a); } catch (e) {}
+  const BOTS = [['Juniper', { kind: 2, col: 0, bg: 2, acc: 1 }], ['Bram', { kind: 1, col: 3, bg: 3, acc: 3 }], ['Odette', { kind: 3, col: 5, bg: 4, acc: 4 }]];
+  function renderAvEditor() {
+    $('#avPrev').innerHTML = Avatar.svg(myAv);
+    $('#avCard [data-k=kind] span').textContent = Avatar.KINDS[myAv.kind];
+    $('#avCard [data-k=acc] span').textContent = Avatar.ACCS[myAv.acc] === 'None' ? 'No extra' : Avatar.ACCS[myAv.acc];
+    try { localStorage.setItem('meldline-avatar', JSON.stringify(myAv)); } catch (e) {}
+  }
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   /* ---------- host (authoritative game state lives here) ---------- */
@@ -34,14 +47,14 @@
       else if (s.conn && s.conn.open) s.conn.send(m);
     },
     sendLobby() {
-      const players = this.seats.map(s => ({ name: s.name, bot: !!s.bot }));
+      const players = this.seats.map(s => ({ name: s.name, bot: !!s.bot, av: s.av }));
       this.seats.forEach((s, i) => this.toSeat(i, { t: 'lobby', code: this.code, players, you: i }));
     },
     broadcastState() {
       const g = this.g;
       this.seats.forEach((s, i) => {
         const v = L.view(g, i);
-        v.players.forEach((p, k) => { const q = this.seats[k]; p.off = !q.bot && !q.local && !q.connected; });
+        v.players.forEach((p, k) => { const q = this.seats[k]; p.off = !q.bot && !q.local && !q.connected; p.av = q.av; });
         this.toSeat(i, Object.assign(v, { t: 'state', ack: s.ack || 0, remain: this.deadline ? this.deadline - Date.now() : 0 }));
       });
     },
@@ -85,11 +98,11 @@
           if (this.g) {
             const s = this.seats.find(s => !s.bot && !s.local && !s.connected && s.name === name);
             if (!s) return c.send({ t: 'err', text: 'That game is already in progress' });
-            s.conn = c; s.connected = true; this.broadcastState();
+            s.conn = c; s.connected = true; s.av = Avatar.clean(m.av); this.broadcastState();
           } else {
             if (this.seats.length >= 4) return c.send({ t: 'err', text: 'Table is full' });
             for (let k = 2; this.seats.some(s => s.name === name); k++) name = name.slice(0, 10) + ' ' + k;
-            this.seats.push({ name, conn: c, connected: true }); this.sendLobby();
+            this.seats.push({ name, conn: c, connected: true, av: Avatar.clean(m.av) }); this.sendLobby();
           }
           return;
         }
@@ -120,7 +133,7 @@
   }
   function hostOnline() {
     if (!window.Peer) return toast('Networking library failed to load');
-    isHost = true; Host.g = null; Host.seats = [{ name: myName(), local: true }];
+    isHost = true; Host.g = null; Host.seats = [{ name: myName(), local: true, av: myAv }];
     toast('Opening table…', true);
     const open = () => {
       const code = Array.from({ length: 5 }, () => 'ABCDEFGHJKMNPQRSTUVWXYZ'[Math.floor(Math.random() * 23)]).join('');
@@ -140,7 +153,7 @@
     const peer = new Peer(peerOpts()); Net.peer = peer;
     peer.on('open', () => {
       const c = peer.connect(PREFIX + code, { reliable: true }); Net.conn = c;
-      c.on('open', () => { $('#toast').classList.remove('show'); c.send({ t: 'join', name: myName() }); });
+      c.on('open', () => { $('#toast').classList.remove('show'); c.send({ t: 'join', name: myName(), av: myAv }); });
       c.on('data', m => Client.onMsg(m));
       c.on('close', () => toast('Lost connection to the host. Reload to rejoin.', true));
     });
@@ -148,9 +161,8 @@
   }
   function playSolo() {
     isHost = true; Host.timerSec = 0; Host.code = '';
-    Host.seats = [{ name: myName(), local: true }];
-    const names = ['Juniper', 'Bram', 'Odette'];
-    for (let i = 0; i < +$('#botn').value; i++) Host.seats.push({ name: names[i], bot: true });
+    Host.seats = [{ name: myName(), local: true, av: myAv }];
+    for (let i = 0; i < +$('#botn').value; i++) Host.seats.push({ name: BOTS[i][0], av: BOTS[i][1], bot: true });
     Host.start();
   }
 
@@ -159,7 +171,7 @@
     onMsg(m) {
       if (!m) return;
       if (m.t === 'lobby') return renderLobby(m);
-      if (m.t === 'err') return toast(m.text);
+      if (m.t === 'err') { shake(); return toast(m.text); }
       if (m.t === 'drag') return showGhost(m);
       if (m.t === 'dragend') return clearGhost();
       if (m.t === 'state') {
@@ -179,14 +191,19 @@
       }
     },
   };
+  function shake() {
+    if (noAnim) return;
+    const els = [...document.querySelectorAll('#world .tile.bad')]; if (!els.length) els.push($('#status'));
+    els.forEach(el => el.animate([0, -5, 5, -4, 4, -2, 0].map(x => ({ transform: `translateX(${x}px)` })), { duration: 380, easing: 'ease-out' }));
+  }
   function sendSeq(m) { m.seq = ++seq; Net.send(m); }
 
   /* ---------- lobby ---------- */
   function renderLobby(m) {
-    show('lobby'); S = null;
+    show('lobby'); S = null; R = null;
     $('#lobbyCode').textContent = m.code;
     $('#lobbyHint').textContent = isHost ? 'Share the code. 2–4 players.' : 'Waiting for the host to start…';
-    $('#seats').innerHTML = m.players.map((p, i) => `<li>${esc(p.name)} <small>${p.bot ? 'bot' : i === 0 ? 'host' : ''}${i === m.you ? ' (you)' : ''}</small></li>`).join('');
+    $('#seats').innerHTML = m.players.map((p, i) => `<li><span class="lav">${Avatar.svg(p.av)}</span><span class="grow">${esc(p.name)}</span> <small>${p.bot ? 'bot' : i === 0 ? 'host' : ''}${i === m.you ? ' (you)' : ''}</small></li>`).join('');
     $('#hostCtl').classList.toggle('hidden', !isHost);
     $('#startBtn').disabled = m.players.length < 2;
     $('#addBot').disabled = m.players.length >= 4;
@@ -218,6 +235,7 @@
     const rows = Math.max(2, Math.ceil(rackOrder.length / g.cols));
     let spacer = rack.querySelector('.spacer');
     if (!spacer) { spacer = document.createElement('div'); spacer.className = 'spacer'; rack.append(spacer); }
+    rack.style.setProperty('--rowh', g.th + g.gap + 4 + 'px');
     spacer.style.height = rows * (g.th + g.gap + 4) + 2 * g.pad - g.gap + 'px';
     const meld = new Set(rackSegments().filter(s => L.analyzeSet(s).valid).flat());
     rackOrder.forEach((id, i) => {
@@ -227,7 +245,7 @@
       el.style.setProperty('--w', g.tw + 'px');
       el.style.left = g.pad + (i % g.cols) * (g.tw + g.gap) + 'px';
       el.style.top = g.pad + Math.floor(i / g.cols) * (g.th + g.gap + 4) + 'px';
-      el.className = 'tile' + (meld.has(id) ? ' meld' : '') + (drag && (drag.id === id || (drag.set && drag.set.includes(id))) ? ' lifted' : '');
+      el.className = 'tile' + (meld.has(id) ? ' meld' : '') + (drag && (drag.id === id || (drag.set && drag.set.includes(id))) ? ' lifted' : '') + (flying.has(id) ? ' hid' : '');
     });
   }
   /* rack slots: tile ids, with null = an empty gap between groups */
@@ -258,12 +276,13 @@
   function render() {
     if (!S) return;
     // players
-    const hues = ['#0d8f88', '#c2553f', '#6848d8', '#3b6fb5'];
     $('#players').innerHTML = S.players.map((p, i) =>
-      `<div class="pl${i === S.turn ? ' turn' : ''}${p.melded ? ' melded' : ''}${p.off ? ' off' : ''}${i === me ? ' me' : ''}"><div class="av" style="--h:${hues[i]}">${esc(p.name.slice(0, 1).toUpperCase())}<span class="ok">✓</span><span class="n">${p.count}</span></div><div class="nm">${i === me ? 'You' : esc(p.name)}</div></div>`).join('');
+      `<div class="pl${i === S.turn ? ' turn' : ''}${p.melded ? ' melded' : ''}${p.off ? ' off' : ''}${i === me ? ' me' : ''}"><div class="av">${Avatar.svg(p.av)}<span class="ok">✓</span><span class="n">${p.count}</span></div><div class="nm">${i === me ? 'You' : esc(p.name)}</div></div>`).join('');
     $('#sortRun').classList.toggle('on', sortMode === 'run' && !manual); $('#sortGroup').classList.toggle('on', sortMode === 'group' && !manual);
     // table
     const world = $('#world'), bad = new Set(); let open = 0, placed = 0;
+    const prev = new Map();
+    tiles.forEach((el, id) => { if (el.isConnected) prev.set(id, { r: el.getBoundingClientRect(), where: el.parentNode === world ? 'board' : 'rack' }); });
     for (const set of L.boardSets(S.board)) {
       const a = L.analyzeSet(set);
       if (!a.valid) set.forEach(id => bad.add(id));
@@ -275,11 +294,16 @@
       if (el.parentNode !== world) world.append(el);
       el.style.removeProperty('--w');
       el.style.left = S.board[k][0] * CW + 2 + 'px'; el.style.top = S.board[k][1] * CH + 2 + 'px';
-      el.className = 'tile' + (bad.has(id) ? ' bad' : isNew ? ' placed' : '') + (drag && drag.id === id ? ' lifted' : '');
+      el.className = 'tile' + (bad.has(id) ? ' bad' : isNew ? ' placed' : '') + (drag && drag.id === id ? ' lifted' : '') + (flying.has(id) ? ' hid' : '');
       el.style.cursor = canMoveBoard(id) ? 'grab' : 'inherit';
     }
     layoutRack();
-    tiles.forEach((el, id) => { if (!(id in S.board) && !rackOrder.includes(id)) { el.remove(); tiles.delete(id); } });
+    tiles.forEach((el, id) => {
+      if (id in S.board || rackOrder.includes(id)) return;
+      const p = prev.get(id), to = p && R && p.where === 'board' && avatarRect(R.turn, p.r.width); // taken back into someone's rack
+      if (to && !noAnim) fly(el.cloneNode(true), p.r, to, { out: true, dur: 340 });
+      el.remove(); tiles.delete(id);
+    });
     // controls
     const mine = myTurn(), st = $('#status');
     $('#mainBtn').disabled = !mine; $('#undoBtn').disabled = !mine || !placed;
@@ -289,6 +313,66 @@
     if (S.winner != null) st.textContent = 'Game over';
     else if (mine) st.textContent = S.players[me].melded ? (bad.size ? 'Fix the red sets to end your turn' : 'Your turn') : `Your turn · opening ${open}/30`;
     else st.textContent = S.players[S.turn].name + ' is playing…';
+    animateChanges(prev);
+    R = { turn: S.turn, counts: S.players.map(p => p.count), pool: S.pool };
+    dropFrom.clear();
+  }
+
+  /* ---------- motion: tiles travel from where they really came from ---------- */
+  function avatarRect(i, w) {
+    const pl = $('#players').children[i], r = pl && pl.querySelector('.av').getBoundingClientRect();
+    return r && r.width ? { left: r.left + r.width / 2 - w * 0.2, top: r.top + r.height / 2 - w * 0.28, width: w * 0.4 } : null;
+  }
+  function poolRect(w) { // the draw pile lives on the Draw button
+    const r = $('#mainBtn').getBoundingClientRect();
+    return r.width ? { left: r.left + r.width / 2 - w / 2, top: r.top + r.height / 2 - w * 0.69, width: w } : null;
+  }
+  function fly(node, from, to, o) {
+    o = o || {};
+    const base = o.out ? from : to, k = r => `translate(${r.left - base.left}px,${r.top - base.top}px) scale(${r.width / base.width})`;
+    node.className = 'tile fly' + (o.cls || ''); node.style.cssText = '';
+    node.style.setProperty('--w', base.width + 'px'); node.style.left = base.left + 'px'; node.style.top = base.top + 'px';
+    $('#draglayer').append(node);
+    flights.push({ kind: o.kind || '', from: [Math.round(from.left), Math.round(from.top)], to: [Math.round(to.left), Math.round(to.top)] }); if (flights.length > 60) flights.shift();
+    const a = node.animate([
+      { transform: k(from), opacity: o.fadeIn ? 0.25 : 1 }, { opacity: 1, offset: o.out ? 0.6 : 0.3 }, { transform: k(to), opacity: o.out ? 0 : 1 },
+    ], { duration: o.dur || 280, delay: o.delay || 0, easing: 'cubic-bezier(.2,.75,.25,1)', fill: 'both' });
+    a.onfinish = a.oncancel = () => { node.remove(); if (o.onEnd) o.onEnd(); };
+  }
+  function animateChanges(prev) {
+    if (noAnim) return;
+    const world = $('#world'), ghostR = ghost && ghost.isConnected ? ghost.getBoundingClientRect() : null;
+    const ids = [...tiles.keys()].sort((a, b) => (S.board[a] ? S.board[a][0] : 0) - (S.board[b] ? S.board[b][0] : 0));
+    let kb = 0, kr = 0;
+    for (const id of ids) {
+      const el = tiles.get(id), p = prev.get(id), where = id in S.board ? 'board' : 'rack';
+      let src = null, o = { dur: 260 };
+      if (drag && (drag.id === id || (drag.set && drag.set.includes(id)))) continue;
+      if (dropFrom.has(id)) { const r = dropFrom.get(id); src = () => r; o = { dur: 200, kind: 'drop' }; }               // released from my finger
+      else if (!p && where === 'board') { if (!R) continue; src = w => ghostR || avatarRect(R.turn, w); o = { dur: 420, delay: 70 * kb++, fadeIn: !ghostR, kind: 'played' }; } // another player's tile
+      else if (!p) { src = poolRect; o = { dur: 360, delay: (R ? 45 : 30) * kr++, fadeIn: true, kind: 'draw' }; }             // drawn / dealt to me
+      else if (p.where !== where) { src = () => p.r; o = { dur: 300, kind: 'return' }; }                                    // undo, or my tile changing home
+      if (!src) continue;
+      el.style.transition = 'none'; const to = el.getBoundingClientRect(); el.style.transition = '';
+      const from = to.width && src(to.width);
+      if (!from) continue;
+      flying.add(id); el.classList.add('hid');
+      o.onEnd = () => {
+        flying.delete(id);
+        const e = tiles.get(id); if (!e) return;
+        e.classList.remove('hid'); e.animate([{ transform: 'scale(1.14)' }, { transform: 'none' }], { duration: 150, easing: 'ease-out' });
+      };
+      fly(el.cloneNode(true), from, to, o);
+    }
+    if (R) S.players.forEach((p, i) => { // someone else drew: a face-down tile travels from the pile to them
+      if (i === me || p.count <= R.counts[i] || S.pool >= R.pool) return;
+      const from = poolRect(34), to = avatarRect(i, 34);
+      if (from && to) fly(document.createElement('div'), from, to, { out: true, dur: 480, cls: ' back', kind: 'oppdraw' });
+    });
+    if (R && R.turn !== S.turn && S.winner == null) { // nudge the avatar whose turn just began
+      const pl = $('#players').children[S.turn], av = pl && pl.querySelector('.av');
+      if (av) av.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.22)' }, { transform: 'scale(1)' }], { duration: 420, easing: 'ease-out' });
+    }
   }
 
   function sortRack(mode) {
@@ -306,7 +390,7 @@
   function renderOver() {
     const rows = S.players.map((p, i) => ({ p, i, s: S.scores[i] })).sort((a, b) => a.s - b.s);
     $('#over').innerHTML = `<div class="card"><h1>${S.winner === me ? 'You win!' : esc(S.players[S.winner].name) + ' wins'}</h1>
-      <ol>${rows.map(r => `<li class="${r.i === S.winner ? 'win' : ''}"><span>${esc(r.p.name)}</span><span>${r.s ? '−' + r.s : '0'}</span></li>`).join('')}</ol>
+      <ol>${rows.map(r => `<li class="${r.i === S.winner ? 'win' : ''}"><span class="lav">${Avatar.svg(r.p.av)}</span><span class="grow">${esc(r.p.name)}</span><span>${r.s ? '−' + r.s : '0'}</span></li>`).join('')}</ol>
       ${isHost ? '<button class="primary wide" id="againBtn">Play again</button>' : '<p class="tag" style="margin:0">Waiting for the host…</p>'}
       <button class="wide ghostbtn" id="menuBtn">Main menu</button></div>`;
     if (isHost) $('#againBtn').onclick = () => Host.start();
@@ -364,6 +448,7 @@
 
   /* ---------- dragging tiles ---------- */
   function dragPoint(e) { return { x: e.clientX, y: e.clientY - (e.pointerType === 'touch' ? drag.h * 0.55 : 0) }; }
+  function dragPoint2(e, d) { return e.clientY - (e.pointerType === 'touch' ? d.h * 0.55 : 0); }
   function targetAt(px, py) {
     const r = $('#rack').getBoundingClientRect(), g = rackGeo;
     if (r.height && py >= r.top - 4 && px >= r.left - 4 && px <= r.right + 4) {
@@ -416,6 +501,8 @@
   }
   function endDrag(e, cancelled) {
     const d = drag, id = d.id, p = dragPoint(e), t = cancelled ? null : targetAt(p.x, p.y);
+    if (d.set) [...d.f.children].forEach((c, k) => dropFrom.set(d.set[k], c.getBoundingClientRect()));
+    else { const fr = d.f.getBoundingClientRect(); dropFrom.set(id, { left: e.clientX - d.w / 2, top: dragPoint2(e, d) - d.h / 2, width: d.w, raw: fr }); }
     clearTimeout(d.hold); d.f.remove(); $('#hint').style.display = 'none'; drag = null;
     if (d.set) {
       if (t && !t.rack) {
@@ -472,7 +559,7 @@
   $('#hostBtn').onclick = hostOnline;
   $('#joinBtn').onclick = () => joinOnline($('#code').value);
   $('#startBtn').onclick = () => { Host.timerSec = +$('#timerSel').value; Host.start(); };
-  $('#addBot').onclick = () => { if (Host.seats.length < 4) { Host.seats.push({ name: ['Juniper', 'Bram', 'Odette'][Host.seats.filter(s => s.bot).length], bot: true }); Host.sendLobby(); } };
+  $('#addBot').onclick = () => { if (Host.seats.length < 4) { const b = BOTS[Host.seats.filter(s => s.bot).length]; Host.seats.push({ name: b[0], av: b[1], bot: true }); Host.sendLobby(); } };
   $('#leaveBtn').onclick = () => { location.href = location.pathname; };
   $('#shareBtn').onclick = () => {
     const url = roomUrl($('#lobbyCode').textContent);
@@ -494,9 +581,17 @@
     t.textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); t.classList.toggle('low', s <= 15);
   }, 500);
 
+  $('#avCard').addEventListener('click', e => {
+    const b = e.target.closest('.cyc button'); if (!b) return;
+    const k = b.parentNode.dataset.k, n = Avatar.N[k];
+    myAv[k] = (myAv[k] + +b.dataset.d + n) % n; renderAvEditor();
+  });
+  $('#avRandom').onclick = () => { myAv = Avatar.random(); renderAvEditor(); };
+  renderAvEditor();
+
   /* ---------- boot ---------- */
   try { $('#name').value = localStorage.getItem('meldline-name') || ''; } catch (e) {}
   const room = new URLSearchParams(location.search).get('room');
   if (room) $('#code').value = room.toUpperCase().slice(0, 5);
-  window.__meldline = { Host, get S() { return S; }, get rack() { return rackOrder; } }; // handy for debugging
+  window.__meldline = { Host, get S() { return S; }, get rack() { return rackOrder; }, flights }; // handy for debugging
 })();
