@@ -7,6 +7,7 @@
   let S = null, me = -1, isHost = false, seq = 0, rackOrder = [], snapSet = new Set(), deadline = 0;
   let view = { x: 0, y: 0, s: 1 }, drag = null, ghost = null, rackGeo = { cols: 1, tw: 40, th: 55, gap: 5, pad: 7 };
   const tiles = new Map();
+  let sortMode = 'run', manual = false;
 
   /* ---------- small helpers ---------- */
   let toastT;
@@ -166,8 +167,10 @@
         const first = !S || $('#game').classList.contains('hidden'), prevTurn = S ? S.turn : -1;
         S = m; me = m.you; snapSet = new Set(m.snap);
         deadline = m.remain > 0 ? Date.now() + m.remain : 0;
-        rackOrder = rackOrder.filter(id => S.rack.includes(id));
-        S.rack.forEach(id => { if (!rackOrder.includes(id)) rackOrder.push(id); });
+        rackOrder = rackOrder.filter(id => id === null || S.rack.includes(id));
+        let fresh = false;
+        S.rack.forEach(id => { if (!rackOrder.includes(id)) { rackOrder.push(id); fresh = true; } });
+        if (fresh && !manual && !first) sortRack(); else normalizeRack();
         if (first) { show('game'); $('#world').style.width = S.W * CW + 'px'; $('#world').style.height = S.H * CH + 'px'; sortRack('run'); fit(); }
         if (prevTurn !== S.turn) { clearGhost(); if (S.turn === me && S.winner == null && !first) toast('Your turn'); }
         render();
@@ -216,22 +219,49 @@
     let spacer = rack.querySelector('.spacer');
     if (!spacer) { spacer = document.createElement('div'); spacer.className = 'spacer'; rack.append(spacer); }
     spacer.style.height = rows * (g.th + g.gap + 4) + 2 * g.pad - g.gap + 'px';
+    const meld = new Set(rackSegments().filter(s => L.analyzeSet(s).valid).flat());
     rackOrder.forEach((id, i) => {
+      if (id === null) return;
       const el = getTile(id);
       if (el.parentNode !== rack) rack.append(el);
       el.style.setProperty('--w', g.tw + 'px');
       el.style.left = g.pad + (i % g.cols) * (g.tw + g.gap) + 'px';
       el.style.top = g.pad + Math.floor(i / g.cols) * (g.th + g.gap + 4) + 'px';
-      el.className = 'tile' + (drag && drag.id === id ? ' lifted' : '');
+      el.className = 'tile' + (meld.has(id) ? ' meld' : '') + (drag && (drag.id === id || (drag.set && drag.set.includes(id))) ? ' lifted' : '');
     });
+  }
+  /* rack slots: tile ids, with null = an empty gap between groups */
+  function normalizeRack() {
+    rackOrder = rackOrder.filter((v, i, a) => v !== null || (i > 0 && a[i - 1] !== null));
+    while (rackOrder.length && rackOrder[rackOrder.length - 1] === null) rackOrder.pop();
+  }
+  function rackSegments() {
+    const out = [[]];
+    rackOrder.forEach(v => { if (v === null) out.push([]); else out[out.length - 1].push(v); });
+    return out.filter(s => s.length);
+  }
+  const validSegOf = id => rackSegments().find(s => s.includes(id) && L.analyzeSet(s).valid);
+  /* ready-to-play sets for the chosen sort: runs for 1·2·3, groups for 7·7·7 */
+  function findSets(ids, mode) {
+    const sets = [];
+    if (mode === 'run') for (let c = 0; c < 4; c++) {
+      const by = {}; ids.forEach(id => { const t = L.tile(id); if (!t.joker && t.color === c && !(t.num in by)) by[t.num] = id; });
+      let seq = [];
+      for (let n = 1; n <= 14; n++) { if (by[n] != null) seq.push(by[n]); else { if (seq.length >= 3) sets.push(seq); seq = []; } }
+    } else for (let n = 1; n <= 13; n++) {
+      const by = {}; ids.forEach(id => { const t = L.tile(id); if (!t.joker && t.num === n && !(t.color in by)) by[t.color] = id; });
+      const g = Object.values(by); if (g.length >= 3) sets.push(g);
+    }
+    return sets;
   }
 
   function render() {
     if (!S) return;
     // players
+    const hues = ['#0d8f88', '#c2553f', '#6848d8', '#3b6fb5'];
     $('#players').innerHTML = S.players.map((p, i) =>
-      `<div class="chip${i === S.turn ? ' turn' : ''}${p.melded ? ' melded' : ''}${p.off ? ' off' : ''}${i === me ? ' me' : ''}"><span class="dot"></span><span class="nm">${esc(p.name)}</span><span class="n">${p.count}</span></div>`).join('');
-    $('#pool').textContent = '▦ ' + S.pool;
+      `<div class="pl${i === S.turn ? ' turn' : ''}${p.melded ? ' melded' : ''}${p.off ? ' off' : ''}${i === me ? ' me' : ''}"><div class="av" style="--h:${hues[i]}">${esc(p.name.slice(0, 1).toUpperCase())}<span class="ok">✓</span><span class="n">${p.count}</span></div><div class="nm">${i === me ? 'You' : esc(p.name)}</div></div>`).join('');
+    $('#sortRun').classList.toggle('on', sortMode === 'run' && !manual); $('#sortGroup').classList.toggle('on', sortMode === 'group' && !manual);
     // table
     const world = $('#world'), bad = new Set(); let open = 0, placed = 0;
     for (const set of L.boardSets(S.board)) {
@@ -253,7 +283,7 @@
     // controls
     const mine = myTurn(), st = $('#status');
     $('#mainBtn').disabled = !mine; $('#undoBtn').disabled = !mine || !placed;
-    $('#mainBtn').textContent = placed ? 'End turn' : S.pool ? 'Draw' : 'Pass';
+    $('#mainBtn').innerHTML = `<span>${placed ? 'End turn' : S.pool ? 'Draw' : 'Pass'}</span><small>▦ ${S.pool} left</small>`;
     $('#mainBtn').dataset.act = placed ? 'end' : 'draw';
     st.classList.toggle('mine', mine);
     if (S.winner != null) st.textContent = 'Game over';
@@ -262,8 +292,15 @@
   }
 
   function sortRack(mode) {
+    if (mode) sortMode = mode; else mode = sortMode;
+    manual = false;
     const key = id => { const t = L.tile(id); return t.joker ? 1e4 + id : mode === 'run' ? t.color * 100 + t.num : t.num * 10 + t.color; };
-    rackOrder.sort((a, b) => key(a) - key(b) || a - b);
+    const ids = rackOrder.filter(v => v !== null).sort((a, b) => key(a) - key(b) || a - b);
+    const sets = findSets(ids, mode), used = new Set(sets.flat());
+    rackOrder = [];
+    sets.forEach(s => rackOrder.push(...s, null));
+    rackOrder.push(...ids.filter(id => !used.has(id)));
+    normalizeRack();
   }
 
   function renderOver() {
@@ -328,15 +365,14 @@
   /* ---------- dragging tiles ---------- */
   function dragPoint(e) { return { x: e.clientX, y: e.clientY - (e.pointerType === 'touch' ? drag.h * 0.55 : 0) }; }
   function targetAt(px, py) {
-    const dock = $('#dock').getBoundingClientRect();
-    if (dock.height && py >= dock.top) {
-      const r = $('#rack').getBoundingClientRect(), g = rackGeo;
+    const r = $('#rack').getBoundingClientRect(), g = rackGeo;
+    if (r.height && py >= r.top - 4 && px >= r.left - 4 && px <= r.right + 4) {
       const col = clamp(Math.floor((px - r.left - g.pad + g.gap / 2) / (g.tw + g.gap)), 0, g.cols - 1);
       const row = Math.max(0, Math.floor((py - r.top + $('#rack').scrollTop - g.pad) / (g.th + g.gap + 4)));
       return { rack: true, index: row * g.cols + col };
     }
     const b = $('#board').getBoundingClientRect();
-    if (py < b.top) return null;
+    if (py < b.top || py > b.bottom || px < b.left || px > b.right) return null;
     const bx = (px - b.left - view.x) / view.s, by = (py - b.top - view.y) / view.s;
     const x = Math.floor(bx / CW), y = Math.floor(by / CH);
     if (x < 0 || y < 0 || x >= S.W || y >= S.H) return null;
@@ -351,24 +387,52 @@
     const w = Math.max(r.width, 40);
     f.className = 'tile float'; f.style.setProperty('--w', w + 'px');
     $('#draglayer').append(f); el.classList.add('lifted');
-    drag = { id, f, pid: e.pointerId, from: onBoard ? 'board' : 'rack', w, h: w * 1.38, last: 0, sent: false };
+    drag = { id, f, pid: e.pointerId, from: onBoard ? 'board' : 'rack', w, tw: w, h: w * 1.38, last: 0, sent: false, sx: e.clientX, sy: e.clientY };
+    if (!onBoard) { const seg = validSegOf(id); if (seg) drag.hold = setTimeout(() => grabSet(seg), 380); }
     moveDrag(e);
   }
+  function grabSet(seg) { // press-and-hold: pick up the whole ready set
+    if (!drag) return;
+    drag.hold = null; drag.set = seg.slice(); drag.f.remove();
+    const f = document.createElement('div'); f.className = 'floatset';
+    seg.forEach(id => {
+      const el = tiles.get(id), c = el.cloneNode(true);
+      c.className = 'tile'; c.style.cssText = ''; c.style.setProperty('--w', drag.tw + 'px'); f.append(c); el.classList.add('lifted');
+    });
+    $('#draglayer').append(f); drag.f = f; drag.w = seg.length * drag.tw + (seg.length - 1) * 3;
+    if (navigator.vibrate) try { navigator.vibrate(15); } catch (e) {}
+    moveDrag(drag.ev);
+  }
   function moveDrag(e) {
-    const p = dragPoint(e), t = targetAt(p.x, p.y), hint = $('#hint');
+    drag.ev = e;
+    if (drag.hold && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) > 8) { clearTimeout(drag.hold); drag.hold = null; }
+    const p = dragPoint(e), t = targetAt(p.x, p.y), hint = $('#hint'), n = drag.set ? drag.set.length : 1;
     drag.f.style.left = p.x - drag.w / 2 + 'px'; drag.f.style.top = p.y - drag.h / 2 + 'px';
     if (t && !t.rack && myTurn()) {
-      hint.style.display = 'block'; hint.style.left = t.x * CW + 2 + 'px'; hint.style.top = t.y * CH + 2 + 'px';
+      hint.style.display = 'block'; hint.style.left = (t.x - Math.floor((n - 1) / 2)) * CW + 2 + 'px'; hint.style.width = n * CW - 4 + 'px'; hint.style.top = t.y * CH + 2 + 'px';
       const now = performance.now();
       if (now - drag.last > 45) { drag.last = now; drag.sent = true; Net.send({ t: 'drag', id: drag.id, x: +(t.bx / CW - 0.5).toFixed(2), y: +(t.by / CH - 0.5).toFixed(2) }); }
     } else hint.style.display = 'none';
   }
   function endDrag(e, cancelled) {
     const d = drag, id = d.id, p = dragPoint(e), t = cancelled ? null : targetAt(p.x, p.y);
-    d.f.remove(); $('#hint').style.display = 'none'; drag = null;
+    clearTimeout(d.hold); d.f.remove(); $('#hint').style.display = 'none'; drag = null;
+    if (d.set) {
+      if (t && !t.rack) {
+        const n = d.set.length, sx = t.x - Math.floor((n - 1) / 2);
+        if (!myTurn()) toast('Wait for your turn');
+        else if (sx < 0 || sx + n > S.W || !d.set.every(x => S.rack.includes(x)) || Object.values(S.board).some(q => q[1] === t.y && q[0] >= sx && q[0] < sx + n)) toast('Not enough room there');
+        else d.set.forEach((x, k) => {
+          S.rack = S.rack.filter(v => v !== x); rackOrder = rackOrder.filter(v => v !== x);
+          S.board[x] = [sx + k, t.y]; sendSeq({ t: 'move', id: x, to: { x: sx + k, y: t.y } });
+        });
+      }
+      if (d.sent) Net.send({ t: 'dragend' });
+      normalizeRack(); render(); return;
+    }
     const stillBoard = id in S.board, stillRack = S.rack.includes(id);
     if (t && t.rack) {
-      if (stillRack) { rackOrder = rackOrder.filter(x => x !== id); rackOrder.splice(Math.min(t.index, rackOrder.length), 0, id); }
+      if (stillRack) { rackOrder = rackOrder.filter(x => x !== id); rackOrder.splice(Math.min(t.index, rackOrder.length), 0, id); manual = true; }
       else if (stillBoard && myTurn()) {
         if (snapSet.has(id)) toast('That tile was already on the table');
         else { delete S.board[id]; S.rack.push(id); rackOrder.splice(Math.min(t.index, rackOrder.length), 0, id); sendSeq({ t: 'move', id, to: 'rack' }); }
@@ -384,7 +448,7 @@
       }
     }
     if (d.sent) Net.send({ t: 'dragend' });
-    render();
+    normalizeRack(); render();
   }
 
   /* other players' tiles in mid-air */
@@ -416,11 +480,12 @@
     else if (navigator.clipboard) navigator.clipboard.writeText(url).then(() => toast('Invite link copied'));
     else toast(url);
   };
-  $('#sortRun').onclick = () => { sortRack('run'); layoutRack(); };
-  $('#sortGroup').onclick = () => { sortRack('group'); layoutRack(); };
+  $('#sortRun').onclick = () => { sortRack('run'); render(); };
+  $('#sortGroup').onclick = () => { sortRack('group'); render(); };
   $('#undoBtn').onclick = () => { if (myTurn()) sendSeq({ t: 'reset' }); };
   $('#mainBtn').onclick = () => { if (myTurn()) Net.send({ t: $('#mainBtn').dataset.act }); };
   window.addEventListener('resize', () => { if (S) { layoutRack(); } });
+  window.addEventListener('orientationchange', () => setTimeout(() => { if (S) { layoutRack(); fit(); } }, 250));
   document.addEventListener('gesturestart', e => e.preventDefault());
   setInterval(() => {
     const t = $('#timer');
@@ -433,5 +498,5 @@
   try { $('#name').value = localStorage.getItem('meldline-name') || ''; } catch (e) {}
   const room = new URLSearchParams(location.search).get('room');
   if (room) $('#code').value = room.toUpperCase().slice(0, 5);
-  window.__meldline = { Host, get S() { return S; } }; // handy for debugging
+  window.__meldline = { Host, get S() { return S; }, get rack() { return rackOrder; } }; // handy for debugging
 })();

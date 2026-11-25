@@ -37,6 +37,7 @@
       <li>Your first play must be your own sets worth <b>30+ points</b>.</li>
       <li>After that you can add to, split and rebuild any set on the table, as long as everything is valid when you end your turn.</li>
       <li>Can't play? Draw a tile. First to empty their rack wins.</li>
+      <li>Ready sets are lined up at the front of your rack (runs with 1·2·3, groups with 7·7·7). <b>Press and hold</b> one to pick up the whole set.</li>
       <li>Drag tiles with a finger. Drag the table to pan, pinch or scroll to zoom.</li>
     </ul>
   </details>
@@ -58,13 +59,10 @@
 </section>
 
 <section id="game" class="hidden">
-  <header id="top">
-    <div id="players"></div>
-    <div id="meta"><span id="pool" title="Tiles left to draw"></span><span id="timer"></span></div>
-  </header>
+  <aside id="players"></aside>
   <main id="board">
     <div id="world"><div id="hint"></div></div>
-    <div id="status"></div>
+    <div id="statusbar"><span id="status"></span><span id="timer"></span></div>
     <div id="zoom">
       <button data-z="in" aria-label="Zoom in">+</button>
       <button data-z="out" aria-label="Zoom out">−</button>
@@ -72,16 +70,14 @@
       <button id="expand" aria-label="Expand table view">⤢</button>
     </div>
   </main>
-  <footer id="dock">
-    <div id="actions">
-      <button id="sortRun" title="Sort by colour">1·2·3</button>
-      <button id="sortGroup" title="Sort by number">7·7·7</button>
-      <span class="grow"></span>
-      <button id="undoBtn">Undo</button>
-      <button id="mainBtn" class="primary">Draw</button>
-    </div>
-    <div id="rack"></div>
-  </footer>
+  <aside id="side">
+    <button id="sortRun" class="big" title="Line up runs">1·2·3</button>
+    <button id="sortGroup" class="big" title="Line up groups">7·7·7</button>
+    <span class="grow"></span>
+    <button id="undoBtn">Undo</button>
+    <button id="mainBtn" class="primary">Draw</button>
+  </aside>
+  <div id="rack"></div>
 </section>
 
 <div id="draglayer"></div>
