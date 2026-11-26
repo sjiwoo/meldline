@@ -19,7 +19,11 @@
     const t = $('#toast'); t.textContent = text; t.classList.add('show');
     clearTimeout(toastT); if (!sticky) toastT = setTimeout(() => t.classList.remove('show'), 2200);
   }
-  function show(id) { ['menu', 'lobby', 'game'].forEach(s => $('#' + s).classList.toggle('hidden', s !== id)); }
+  function show(id) {
+    ['menu', 'lobby', 'game'].forEach(s => $('#' + s).classList.toggle('hidden', s !== id));
+    $('#pagePad').classList.toggle('hidden', id !== 'game');
+    if (id !== 'game') window.scrollTo(0, 0);
+  }
   function myName() {
     const n = ($('#name').value || '').trim() || 'Player';
     try { localStorage.setItem('meldline-name', n); } catch (e) {}
@@ -592,7 +596,19 @@
   $('#mainBtn').onclick = () => { if (myTurn()) Net.send({ t: $('#mainBtn').dataset.act }); };
   window.addEventListener('resize', () => { if (S) { layoutRack(); } });
   window.addEventListener('orientationchange', () => setTimeout(() => { if (S) { layoutRack(); fit(); } }, 250));
-  document.addEventListener('gesturestart', e => e.preventDefault());
+  /* keep the page fixed: no pinch zoom, double-tap zoom or ctrl/cmd zoom (the table has its own zoom) */
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach(t => document.addEventListener(t, e => e.preventDefault(), { passive: false }));
+  document.addEventListener('touchmove', e => { if (e.touches.length > 1 || (e.scale && e.scale !== 1)) e.preventDefault(); }, { passive: false });
+  let lastTap = 0;
+  document.addEventListener('touchend', e => {
+    const now = e.timeStamp, quick = now - lastTap < 320; lastTap = now;
+    if (!quick || e.touches.length || e.target.closest('input, select, textarea')) return;
+    e.preventDefault(); // second tap of a double tap: stop Safari zooming, but still press the button
+    const b = e.target.closest('button, summary, a, label'); if (b) b.click();
+  }, { passive: false });
+  document.addEventListener('dblclick', e => e.preventDefault(), { passive: false });
+  window.addEventListener('wheel', e => { if (e.ctrlKey || e.metaKey) e.preventDefault(); }, { passive: false });
+  window.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && ['+', '=', '-', '_', '0'].includes(e.key)) e.preventDefault(); });
   setInterval(() => {
     const t = $('#timer');
     if (!S || !deadline || S.winner != null) { t.textContent = ''; return; }
@@ -607,6 +623,34 @@
   });
   $('#avRandom').onclick = () => { myAv = Avatar.random(); renderAvEditor(); };
   renderAvEditor();
+
+  /* ---------- full screen ---------- */
+  const installed = (window.matchMedia && (matchMedia('(display-mode: fullscreen)').matches || matchMedia('(display-mode: standalone)').matches)) || navigator.standalone;
+  if (installed) document.body.classList.add('app');
+  const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
+  const root = document.documentElement, canFs = !!(root.requestFullscreen || root.webkitRequestFullscreen);
+  function toggleFullscreen() {
+    if (fsEl()) return (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    if (canFs) {
+      const p = (root.requestFullscreen || root.webkitRequestFullscreen).call(root, { navigationUI: 'hide' });
+      if (p && p.then) p.then(() => { try { screen.orientation.lock && screen.orientation.lock('any').catch(() => {}); } catch (e) {} }, () => fsHelp());
+    } else fsHelp();
+  }
+  function fsHelp() { // iPhone Safari: no Fullscreen API for pages
+    $('#fsModal').classList.remove('hidden');
+    if (!$('#game').classList.contains('hidden')) window.scrollTo({ top: 72, behavior: 'smooth' });
+  }
+  function onFsChange() { document.body.classList.toggle('fs', !!fsEl()); setTimeout(() => { if (S) { layoutRack(); fit(); } }, 120); }
+  document.addEventListener('fullscreenchange', onFsChange); document.addEventListener('webkitfullscreenchange', onFsChange);
+  document.querySelectorAll('.fsBtn').forEach(b => b.addEventListener('click', toggleFullscreen));
+  $('#fsOk').onclick = () => $('#fsModal').classList.add('hidden');
+  // the game grows when Safari's toolbars shrink: keep the rack and table sized to it
+  let lastH = window.innerHeight;
+  const vv = window.visualViewport;
+  (vv || window).addEventListener('resize', () => {
+    const h = window.innerHeight; if (Math.abs(h - lastH) < 2 || !S) return;
+    lastH = h; layoutRack();
+  });
 
   /* ---------- boot ---------- */
   try { $('#name').value = localStorage.getItem('meldline-name') || ''; } catch (e) {}

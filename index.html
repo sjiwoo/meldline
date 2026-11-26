@@ -4,6 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Meldline">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-192.png">
 <meta name="theme-color" content="#0f2a30">
 <title>Meldline — online tile rummy</title>
 <link rel="stylesheet" href="css/style.css">
@@ -46,7 +52,10 @@
       <button id="joinBtn">Join</button>
     </div>
   </div>
-  <button id="shareGame" class="wide">🔗 Share Meldline</button>
+  <div class="row">
+    <button id="shareGame" class="grow">🔗 Share Meldline</button>
+    <button class="fsBtn grow">⛶ Full screen</button>
+  </div>
   <details class="card">
     <summary>How to play</summary>
     <ul>
@@ -84,7 +93,8 @@
       <button data-z="in" aria-label="Zoom in">+</button>
       <button data-z="out" aria-label="Zoom out">−</button>
       <button data-z="fit" aria-label="Fit table">Fit</button>
-      <button id="expand" aria-label="Expand table view">⤢</button>
+      <button id="expand" aria-label="Hide side panels">⤢</button>
+      <button class="fsBtn" aria-label="Full screen">⛶</button>
       <button id="shareRoom" class="hidden" aria-label="Share invite link">🔗</button>
     </div>
   </main>
@@ -98,6 +108,7 @@
   <div id="rack"></div>
 </section>
 
+<div id="pagePad" class="hidden"></div>
 <div id="draglayer"></div>
 <div id="over" class="hidden"></div>
 <div id="pwModal" class="modal hidden">
@@ -108,6 +119,19 @@
     <button class="primary wide" type="submit">Join</button>
     <button class="wide ghostbtn" type="button" id="pwCancel">Cancel</button>
   </form>
+</div>
+<div id="fsModal" class="modal hidden">
+  <div class="card">
+    <h1>⛶ Full screen on iPhone</h1>
+    <p class="tag" style="margin:0">Safari on iPhone doesn't let web pages go full screen. For a true full-screen game:</p>
+    <ol class="steps">
+      <li>Tap the <b>Share</b> button in Safari's toolbar</li>
+      <li>Choose <b>Add to Home Screen</b></li>
+      <li>Open Meldline from its home-screen icon</li>
+    </ol>
+    <p class="note">For now, swipe up on the player or button columns to shrink Safari's toolbars.</p>
+    <button class="primary wide" id="fsOk">Got it</button>
+  </div>
 </div>
 <div id="toast"></div>
 
