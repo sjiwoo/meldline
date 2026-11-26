@@ -7,7 +7,7 @@
   let S = null, me = -1, isHost = false, seq = 0, rackOrder = [], snapSet = new Set(), deadline = 0;
   let view = { x: 0, y: 0, s: 1 }, drag = null, ghost = null, rackGeo = { cols: 1, tw: 40, th: 55, gap: 5, pad: 7 };
   const tiles = new Map();
-  let sortMode = 'run', manual = false;
+  let sortMode = 'run', manual = false, roomCode = '';
   /* animation bookkeeping */
   let R = null; // what the last render showed: { turn, counts, pool }
   const flying = new Set(), dropFrom = new Map(), flights = [];
@@ -39,7 +39,7 @@
 
   /* ---------- host (authoritative game state lives here) ---------- */
   const Host = {
-    seats: [], g: null, code: '', timerSec: 0, tmo: null, botTmo: null, deadline: 0,
+    seats: [], g: null, code: '', password: '', timerSec: 0, tmo: null, botTmo: null, deadline: 0,
     toSeat(i, m) {
       const s = this.seats[i];
       if (!s || s.bot) return;
@@ -48,7 +48,7 @@
     },
     sendLobby() {
       const players = this.seats.map(s => ({ name: s.name, bot: !!s.bot, av: s.av }));
-      this.seats.forEach((s, i) => this.toSeat(i, { t: 'lobby', code: this.code, players, you: i }));
+      this.seats.forEach((s, i) => this.toSeat(i, { t: 'lobby', code: this.code, players, you: i, locked: !!this.password }));
     },
     broadcastState() {
       const g = this.g;
@@ -94,6 +94,11 @@
       c.on('data', m => {
         if (!m || typeof m !== 'object') return;
         if (m.t === 'join') {
+          if (this.password && m.pw !== this.password) { // private table: ask (again), give up after a few wrong tries
+            c.tries = (c.tries || 0) + 1;
+            if (c.tries > 6) { c.send({ t: 'err', text: 'Too many wrong passwords' }); return setTimeout(() => c.close(), 200); }
+            return c.send({ t: 'needpw', wrong: typeof m.pw === 'string' && m.pw !== '' });
+          }
           let name = String(m.name || 'Player').slice(0, 12);
           if (this.g) {
             const s = this.seats.find(s => !s.bot && !s.local && !s.connected && s.name === name);
@@ -134,6 +139,7 @@
   function hostOnline() {
     if (!window.Peer) return toast('Networking library failed to load');
     isHost = true; Host.g = null; Host.seats = [{ name: myName(), local: true, av: myAv }];
+    Host.password = $('#roomPw').value.trim();
     toast('Opening table…', true);
     const open = () => {
       const code = Array.from({ length: 5 }, () => 'ABCDEFGHJKMNPQRSTUVWXYZ'[Math.floor(Math.random() * 23)]).join('');
@@ -160,7 +166,7 @@
     peer.on('error', e => toast(e.type === 'peer-unavailable' ? 'No table with that code' : 'Network problem: ' + e.type));
   }
   function playSolo() {
-    isHost = true; Host.timerSec = 0; Host.code = '';
+    isHost = true; Host.timerSec = 0; Host.code = ''; Host.password = ''; roomCode = '';
     Host.seats = [{ name: myName(), local: true, av: myAv }];
     for (let i = 0; i < +$('#botn').value; i++) Host.seats.push({ name: BOTS[i][0], av: BOTS[i][1], bot: true });
     Host.start();
@@ -172,6 +178,11 @@
       if (!m) return;
       if (m.t === 'lobby') return renderLobby(m);
       if (m.t === 'err') { shake(); return toast(m.text); }
+      if (m.t === 'needpw') {
+        $('#toast').classList.remove('show'); $('#pwModal').classList.remove('hidden');
+        $('#pwMsg').textContent = m.wrong ? 'Wrong password. Try again.' : 'This table needs a password.';
+        $('#pwInput').value = ''; $('#pwInput').focus(); return;
+      }
       if (m.t === 'drag') return showGhost(m);
       if (m.t === 'dragend') return clearGhost();
       if (m.t === 'state') {
@@ -200,9 +211,9 @@
 
   /* ---------- lobby ---------- */
   function renderLobby(m) {
-    show('lobby'); S = null; R = null;
+    show('lobby'); S = null; R = null; roomCode = m.code; $('#pwModal').classList.add('hidden');
     $('#lobbyCode').textContent = m.code;
-    $('#lobbyHint').textContent = isHost ? 'Share the code. 2–4 players.' : 'Waiting for the host to start…';
+    $('#lobbyHint').textContent = (m.locked ? '🔒 Private table. ' : '') + (isHost ? (m.locked ? 'Share the code and the password “' + Host.password + '”.' : 'Share the code. 2–4 players.') : 'Waiting for the host to start…');
     $('#seats').innerHTML = m.players.map((p, i) => `<li><span class="lav">${Avatar.svg(p.av)}</span><span class="grow">${esc(p.name)}</span> <small>${p.bot ? 'bot' : i === 0 ? 'host' : ''}${i === m.you ? ' (you)' : ''}</small></li>`).join('');
     $('#hostCtl').classList.toggle('hidden', !isHost);
     $('#startBtn').disabled = m.players.length < 2;
@@ -279,6 +290,7 @@
     $('#players').innerHTML = S.players.map((p, i) =>
       `<div class="pl${i === S.turn ? ' turn' : ''}${p.melded ? ' melded' : ''}${p.off ? ' off' : ''}${i === me ? ' me' : ''}"><div class="av">${Avatar.svg(p.av)}<span class="ok">✓</span><span class="n">${p.count}</span></div><div class="nm">${i === me ? 'You' : esc(p.name)}</div></div>`).join('');
     $('#sortRun').classList.toggle('on', sortMode === 'run' && !manual); $('#sortGroup').classList.toggle('on', sortMode === 'group' && !manual);
+    $('#shareRoom').classList.toggle('hidden', !roomCode);
     // table
     const world = $('#world'), bad = new Set(); let open = 0, placed = 0;
     const prev = new Map();
@@ -561,12 +573,19 @@
   $('#startBtn').onclick = () => { Host.timerSec = +$('#timerSel').value; Host.start(); };
   $('#addBot').onclick = () => { if (Host.seats.length < 4) { const b = BOTS[Host.seats.filter(s => s.bot).length]; Host.seats.push({ name: b[0], av: b[1], bot: true }); Host.sendLobby(); } };
   $('#leaveBtn').onclick = () => { location.href = location.pathname; };
-  $('#shareBtn').onclick = () => {
-    const url = roomUrl($('#lobbyCode').textContent);
-    if (navigator.share) navigator.share({ title: 'Meldline', text: 'Join my Meldline table', url }).catch(() => {});
-    else if (navigator.clipboard) navigator.clipboard.writeText(url).then(() => toast('Invite link copied'));
+  function share(url, text) {
+    if (navigator.share) navigator.share({ title: 'Meldline', text, url }).catch(() => {});
+    else if (navigator.clipboard) navigator.clipboard.writeText(url).then(() => toast('Link copied'), () => toast(url));
     else toast(url);
+  }
+  $('#shareBtn').onclick = $('#shareRoom').onclick = () => share(roomUrl(roomCode), 'Join my Meldline table' + (Host.password || $('#lobbyHint').textContent.includes('🔒') ? ' (ask me for the password)' : ''));
+  $('#shareGame').onclick = () => share(location.origin + location.pathname, 'Play Meldline, a tile rummy game');
+  $('#pwForm').onsubmit = e => {
+    e.preventDefault();
+    if (Net.conn && Net.conn.open) Net.conn.send({ t: 'join', name: myName(), av: myAv, pw: $('#pwInput').value.trim() });
+    $('#pwModal').classList.add('hidden'); toast('Joining…', true);
   };
+  $('#pwCancel').onclick = () => { location.href = location.pathname; };
   $('#sortRun').onclick = () => { sortRack('run'); render(); };
   $('#sortGroup').onclick = () => { sortRack('group'); render(); };
   $('#undoBtn').onclick = () => { if (myTurn()) sendSeq({ t: 'reset' }); };

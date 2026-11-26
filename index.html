@@ -36,12 +36,17 @@
   </div>
   <div class="card">
     <h2>Online</h2>
-    <button id="hostBtn" class="primary wide">Host a table</button>
+    <div class="row">
+      <input id="roomPw" maxlength="24" placeholder="Password (optional)" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <button id="hostBtn" class="primary">Host a table</button>
+    </div>
+    <p class="note">Set a password to make the table private. Friends need the code and the password.</p>
     <div class="row">
       <input id="code" maxlength="5" placeholder="CODE" autocomplete="off" autocapitalize="characters">
       <button id="joinBtn">Join</button>
     </div>
   </div>
+  <button id="shareGame" class="wide">🔗 Share Meldline</button>
   <details class="card">
     <summary>How to play</summary>
     <ul>
@@ -80,6 +85,7 @@
       <button data-z="out" aria-label="Zoom out">−</button>
       <button data-z="fit" aria-label="Fit table">Fit</button>
       <button id="expand" aria-label="Expand table view">⤢</button>
+      <button id="shareRoom" class="hidden" aria-label="Share invite link">🔗</button>
     </div>
   </main>
   <aside id="side">
@@ -94,6 +100,15 @@
 
 <div id="draglayer"></div>
 <div id="over" class="hidden"></div>
+<div id="pwModal" class="modal hidden">
+  <form class="card" id="pwForm">
+    <h1>🔒 Private table</h1>
+    <p class="tag" id="pwMsg" style="margin:0">This table needs a password.</p>
+    <input id="pwInput" maxlength="24" placeholder="Password" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button class="primary wide" type="submit">Join</button>
+    <button class="wide ghostbtn" type="button" id="pwCancel">Cancel</button>
+  </form>
+</div>
 <div id="toast"></div>
 
 <script src="vendor/peerjs.min.js"></script>
